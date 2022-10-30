@@ -1,4 +1,4 @@
-import { GBACore, decode } from "./deps.ts";
+import { decode, GBACore } from "./deps.ts";
 import { BIOS_BIN } from "./bios.js";
 
 const BIOS = decode(BIOS_BIN);
@@ -29,15 +29,21 @@ export interface GameInfo {
   saveType: string;
 }
 
+function queueFrame(fn: CallableFunction) {
+  setTimeout(() => {
+    fn();
+    queueFrame(fn);
+  }, 8);
+}
+
 export class GBA {
   static WIDTH = 240;
   static HEIGHT = 160;
 
   core: any;
 
-  constructor() {
+  constructor(public ex: CallableFunction) {
     this.core = new GBACore();
-    this.core.throttle = 8;
     this.core.setBios(BIOS.buffer);
     this.core.setCanvasMemory();
   }
@@ -63,7 +69,32 @@ export class GBA {
   }
 
   run() {
-    this.core.runStable();
+    if (this.core.interval) {
+      return; // Already running
+    }
+    const self = this.core;
+    this.core.paused = false;
+    this.core.audio.pause(false);
+
+    const runFunc = () => {
+      try {
+        if (self.paused) {
+          return;
+        } else {
+          queueFrame(runFunc);
+        }
+        self.advanceFrame();
+        this.ex();
+      } catch (exception) {
+        self.ERROR(exception);
+        if (exception.stack) {
+          self.logStackTrace(exception.stack.split("\n"));
+        }
+        throw exception;
+      }
+    }
+
+    queueFrame(runFunc);
   }
 
   pause() {
@@ -84,13 +115,14 @@ export class GBA {
   getGameInfo(): GameInfo | undefined {
     const info = this.core.mmu?.cart;
     if (!info) return;
-    else
+    else {
       return {
         title: info.title,
         code: info.code,
         maker: info.maker,
         saveType: info.saveType,
       };
+    }
   }
 
   stop() {
